@@ -9,10 +9,9 @@ from requests.packages.urllib3.exceptions import InsecureRequestWarning
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
 from .constants import VERSION
-from .crawler import crawl
-from .fingerprint import fingerprint_page
-from .scorer import score_vectors
 from .display import print_banner, print_crawl_summary, print_vector_scores
+from .reports import build_report, save_json
+from .wizard import run_scan, run_wizard
 
 
 def parse_args() -> argparse.Namespace:
@@ -22,12 +21,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("-t", "--target", required=True,
                         help="Target URL, e.g. http://TARGET/")
+    parser.add_argument("--wizard", action="store_true",
+                        help="Launch interactive guided wizard (recommended).")
+    parser.add_argument("--mode", choices=("quick", "active", "full"), default="quick",
+                        help="Scan mode: quick (passive), active (+probes), full (+JS+paths). Default: quick.")
+    parser.add_argument("--exam", action="store_true",
+                        help="Print exam-mode output: top vectors + direct attack commands.")
     parser.add_argument("--max-pages", type=int, default=30,
                         help="Max pages to crawl. Default: 30.")
     parser.add_argument("--timeout", type=float, default=8.0,
                         help="Request timeout seconds. Default: 8.")
     parser.add_argument("--max-bytes", type=int, default=200_000,
-                        help="Max response bytes to read per page. Default: 200000.")
+                        help="Max response bytes per page. Default: 200000.")
     parser.add_argument("--delay", type=float, default=0.0,
                         help="Delay between requests in seconds. Default: 0.")
     parser.add_argument("--cookie", metavar="VALUE",
@@ -38,11 +43,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--proxy",
                         help="Proxy URL, e.g. http://127.0.0.1:8080.")
     parser.add_argument("--user-agent", default=f"WebRecon/{VERSION}",
-                        help=f"User-Agent string. Default: WebRecon/{VERSION}.")
+                        help=f"User-Agent. Default: WebRecon/{VERSION}.")
     parser.add_argument("-s", "--signals", action="store_true",
                         help="Show individual signals under each vector.")
     parser.add_argument("-v", "--verbose", action="store_true",
-                        help="Print each URL as it is crawled.")
+                        help="Print each URL/path as it is processed.")
+    parser.add_argument("--json-output", metavar="FILE",
+                        help="Save JSON report to file.")
     parser.add_argument("--no-color", action="store_true",
                         help="Disable ANSI color output.")
     parser.add_argument("--no-banner", action="store_true",
@@ -55,7 +62,7 @@ def build_session(args: argparse.Namespace) -> requests.Session:
     session.headers["User-Agent"] = args.user_agent
     if args.cookie:
         session.headers["Cookie"] = args.cookie
-    for h in args.header:
+    for h in (args.header or []):
         if ":" in h:
             name, value = h.split(":", 1)
             session.headers[name.strip()] = value.strip()
@@ -71,28 +78,34 @@ def main() -> int:
     if not args.no_banner:
         print_banner(VERSION, colors)
 
+    if args.wizard:
+        run_wizard(args, colors)
+        return 0
+
     print(f"  target : {args.target}")
+    print(f"  mode   : {args.mode}")
     print(f"  pages  : up to {args.max_pages}")
     print()
 
     session = build_session(args)
-    pages = crawl(
-        start_url=args.target,
-        session=session,
-        timeout=args.timeout,
-        max_bytes=args.max_bytes,
-        max_pages=args.max_pages,
-        delay=args.delay,
-        verbose=args.verbose,
-    )
-
-    for page in pages:
-        fingerprint_page(page)
-
-    scores = score_vectors(pages)
+    pages, scores, stack = run_scan(args, session, args.mode, colors)
 
     print_crawl_summary(pages, colors)
-    print_vector_scores(scores, colors, show_signals=args.signals)
+
+    if args.exam:
+        from .wizard import _print_exam_mode
+        _print_exam_mode(scores, args.target, stack, colors)
+    else:
+        if stack:
+            from .display import _c
+            stack_str = "  ".join(f"{k}:{_c(v,'1;93',colors)}" for k, v in stack.items())
+            print(f"  stack detected: {stack_str}\n")
+        print_vector_scores(scores, colors, show_signals=args.signals)
+
+    if args.json_output:
+        report = build_report(args.target, pages, scores, stack)
+        save_json(report, args.json_output)
+        print(f"  [+] report saved: {args.json_output}")
 
     return 0
 
